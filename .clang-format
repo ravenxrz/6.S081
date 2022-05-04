@@ -1,5 +1,10 @@
 ---
 BasedOnStyle: Mozilla
+AlignConsecutiveMacros: 'true'
+AlignConsecutiveAssignments: 'true'
+AlignConsecutiveDeclarations: 'false'
+AlignOperands: 'true'
+AlignTrailingComments: 'true'
 SortIncludes: 'false'
 
 ...

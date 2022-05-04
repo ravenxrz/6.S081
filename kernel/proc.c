@@ -675,11 +675,11 @@ void
 procdump(void)
 {
   static char *states[] = {
-  [UNUSED]    "unused",
-  [SLEEPING]  "sleep ",
-  [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
+  [UNUSED]    = "unused",
+  [SLEEPING]  = "sleep ",
+  [RUNNABLE]  = "runble",
+  [RUNNING]   = "run   ",
+  [ZOMBIE]    = "zombie"
   };
   struct proc *p;
   char *state;
@@ -695,4 +695,17 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+used_proc_num(void)
+{
+  int cnt = 0;
+  struct proc *p;
+  for(p = &proc[0]; p < &proc[NPROC]; p++){
+    if(p->state != UNUSED) {
+      cnt++;
+    }
+  }
+  return cnt;
 }
