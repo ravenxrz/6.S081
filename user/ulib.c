@@ -22,6 +22,14 @@ strcmp(const char *p, const char *q)
   return (uchar)*p - (uchar)*q;
 }
 
+
+char *
+strcat(char *p, const char *q)
+{
+  memcpy(p + strlen(p), q, strlen(q) + 1);
+  return p;
+}
+
 uint
 strlen(const char *s)
 {
