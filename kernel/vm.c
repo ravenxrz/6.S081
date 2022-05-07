@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -17,6 +19,22 @@ extern char trampoline[]; // trampoline.S
 
 /**
  *  risc-v use 3 level page table, root level is 2, middle 1, last level is 0
+ *
+ * page table 0x0000000087f6e000
+ *  ..0: pte 0x0000000021fda801 pa 0x0000000087f6a000
+ *  .. ..0: pte 0x0000000021fda401 pa 0x0000000087f69000
+ *  .. .. ..0: pte 0x0000000021fdac1f pa 0x0000000087f6b000
+ *  .. .. ..1: pte 0x0000000021fda00f pa 0x0000000087f68000
+ *  .. .. ..2: pte 0x0000000021fd9c1f pa 0x0000000087f67000
+ *  ..255: pte 0x0000000021fdb401 pa 0x0000000087f6d000
+ *  .. ..511: pte 0x0000000021fdb001 pa 0x0000000087f6c000
+ *  .. .. ..510: pte 0x0000000021fdd807 pa 0x0000000087f76000
+ *  .. .. ..511: pte 0x0000000020001c0b pa 0x0000000080007000
+ * lab pgtbl: Explain the output of vmprint in terms of Fig 3-4 from the text.
+  What does page 0 contain? What is in page 2? When running in user mode, could
+ the process read/write the memory mapped by page 1?
+ * ANS: page 0是 stack， page 2是stack guard。 page 1如果运行在user
+ mode是可以read/write的。
  */
 static void
 vmprint_level(pagetable_t pagetable, int level)
@@ -55,48 +73,76 @@ vmprint(pagetable_t pagetable)
   vmprint_level(pagetable, 2);
 }
 
-/*
+/**
  * create a direct-map page table for the kernel.
  */
 void
-kvminit()
+kpgtbl_init(void)
 {
   kernel_pagetable = (pagetable_t)kalloc(); // 分配top level page table entry
   memset(kernel_pagetable, 0, PGSIZE);      // 清空
+  kvminit(kernel_pagetable);
+  // CLINT
+  if (mappages(kernel_pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) < 0) {
+    panic("CLINT mapping failed");
+  }
+}
 
+/*
+ *
+ * change to:
+ * kernel page table init for each process
+ * TODO: 添加一个kernel page table的参数，然后做初始化
+ * return 0, means success, non-zero means failure
+ */
+void
+kvminit(pagetable_t pagetable)
+{
   // map io devices
   // uart registers
-  kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
+  if (mappages(pagetable, UART0, PGSIZE, UART0, PTE_R | PTE_W) < 0) {
+    panic("uart0 mapping failed");
+  }
   // virtio mmio disk interface
-  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // CLINT
-  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
-
+  if (mappages(pagetable, VIRTIO0, PGSIZE, VIRTIO0, PTE_R | PTE_W) < 0) {
+    panic("virtio0 mapping failed");
+  }
   // PLIC
-  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+  if (mappages(pagetable, PLIC, 0x400000, PLIC, PTE_R | PTE_W) < 0) {
+    panic("PLC mapping failed");
+  }
 
   // map kernel text executable and read-only.
-  kvmmap(KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
+  if (mappages(pagetable, KERNBASE, (uint64)etext - KERNBASE, KERNBASE, PTE_R | PTE_X) < 0) {
+    panic("kernel text mapping failed");
+  }
 
   // map kernel data and the physical RAM we'll make use of.
-  kvmmap((uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext, PTE_R | PTE_W);
+  if (mappages(pagetable, (uint64)etext, PHYSTOP - (uint64)etext, (uint64)etext, PTE_R | PTE_W)) {
+    panic("kernel data and free memory mapping failed");
+  }
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
-  kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  if (mappages(pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline, PTE_R | PTE_X) < 0) {
+    panic("kernel TRAMPOLINE mapping failed");
+  }
 }
 
 // Switch h/w page table register to the kernel's page table,
 // and enable paging.
 void
-kvminithart()
+kvminithart(void)
 {
-  w_satp(MAKE_SATP(kernel_pagetable));
+  load_kpgtbl(kernel_pagetable);
+}
+
+void
+load_kpgtbl(pagetable_t pagetable)
+{
+  w_satp(MAKE_SATP(pagetable));
   // TODO: 弄清楚为什么是flush all TLB entries,
-  // 修改是先修改TLB中的映射项，然后flush到内存吗？那为什么xv6 (34页)提到的是
-  // invalidate corresponding TLB entries?
+  // 修改是先修改TLB中的映射项，然后flush到内存吗？那为什么xv6 (34页)提到的是 invalidate corresponding TLB entries?
   sfence_vma();
 }
 
@@ -129,7 +175,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       if (!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V; // 初始化到第0个 PTE
+      *pte = PA2PTE(pagetable) | PTE_V; // 初始化到第0个 PTE, 同时设置 perm为 PTE_V
     }
   }
   return &pagetable[PX(0, va)];
@@ -178,8 +224,9 @@ kvmpa(uint64 va)
   uint64 off = va % PGSIZE;
   pte_t* pte;
   uint64 pa;
+  struct proc* p = myproc();
 
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(p->kpagetable, va, 0);
   if (pte == 0)
     panic("kvmpa");
   if ((*pte & PTE_V) == 0)
@@ -241,7 +288,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
   }
 }
 
-// create an empty user page table.
+// create an empty page table.
 // returns 0 if out of memory.
 pagetable_t
 uvmcreate()
@@ -289,9 +336,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if (mappages(
-          pagetable, a, PGSIZE, (uint64)mem, PTE_W | PTE_X | PTE_R | PTE_U) !=
-        0) {
+    if (mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_W | PTE_X | PTE_R | PTE_U) != 0) {
       kfree(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -332,6 +377,8 @@ freewalk(pagetable_t pagetable)
       freewalk((pagetable_t)child);
       pagetable[i] = 0;
     } else if (pte & PTE_V) {
+      vmprint(pagetable);
+      printf("%p\n", pte);
       panic("freewalk: leaf");
     }
   }
@@ -344,8 +391,8 @@ void
 uvmfree(pagetable_t pagetable, uint64 sz)
 {
   if (sz > 0)
-    uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
-  freewalk(pagetable);
+    uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1); // 释放page table叶子节点中的物理页
+  freewalk(pagetable);                                 // 释放page table本身
 }
 
 // Given a parent process's page table, copy
