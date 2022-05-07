@@ -1,3 +1,5 @@
+// kernel memory layout
+// xv6 use direct-mapping between virtual address and physical address.
 // Physical memory layout
 
 // qemu -machine virt is set up like this,

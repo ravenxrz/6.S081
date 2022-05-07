@@ -37,10 +37,11 @@ procinit(void)
       char *pa = kalloc();
       if(pa == 0)
         panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
+      uint64 va = KSTACK((int) (p - proc));   // 为kernel stack分配va，同时还附加了一个kernel stack-guard标记，可以看kernel的mem layout
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       p->kstack = va;
   }
+  // reload kernel page table info satp so tha the hardware knows about the new PTEs(TODO: 弄清楚是不是每次修改过kernel map后都要重新设置satp？)
   kvminithart();
 }
 

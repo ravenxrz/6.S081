@@ -192,6 +192,7 @@ static inline void
 w_satp(uint64 x)
 {
   asm volatile("csrw satp, %0" : : "r" (x));
+  // 设置satp后，所有的地址都是虚拟地址. 如果前面映射错误，后面的指令可能造成系统崩溃
 }
 
 static inline uint64
