@@ -15,7 +15,7 @@ struct elfhdr {
   uint flags;
   ushort ehsize;
   ushort phentsize;
-  ushort phnum;
+  ushort phnum;     // 有多少个proghdr, NOTE：当前xv6系统只有一个proghdr
   ushort shentsize;
   ushort shnum;
   ushort shstrndx;

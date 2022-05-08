@@ -20,11 +20,14 @@ int nextpid = 1;
 
 struct spinlock pid_lock;
 
-extern void forkret(void);
+extern void
+forkret(void);
 
-static void wakeup1(struct proc* chan);
+static void
+wakeup1(struct proc* chan);
 
-static void freeproc(struct proc* p);
+static void
+freeproc(struct proc* p);
 
 extern char trampoline[]; // trampoline.S
 
@@ -164,19 +167,19 @@ freeproc(struct proc* p)
   if (p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
   if (p->kpagetable) {
-    proc_kfreepagetable(p->kpagetable);
+    proc_kfreepagetable(p->kpagetable, p->sz);
     // TODO: free kpage table
   }
-  p->pagetable = 0;
+  p->pagetable  = 0;
   p->kpagetable = 0;
-  p->sz        = 0;
-  p->pid       = 0;
-  p->parent    = 0;
-  p->name[0]   = 0;
-  p->chan      = 0;
-  p->killed    = 0;
-  p->xstate    = 0;
-  p->state     = UNUSED;
+  p->sz         = 0;
+  p->pid        = 0;
+  p->parent     = 0;
+  p->name[0]    = 0;
+  p->chan       = 0;
+  p->killed     = 0;
+  p->xstate     = 0;
+  p->state      = UNUSED;
 }
 
 // Create a user page table for a given process,
@@ -214,7 +217,7 @@ proc_pagetable(struct proc* p)
 }
 
 // Create a kernel page table for a give process,
-// with no user memory, but with KStack pages
+// with no user memory allocation, only allocate kstack pages
 // return kernel page table if success, or failed with 0
 pagetable_t
 proc_kpagetable(struct proc* p)
@@ -257,7 +260,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 }
 
 void
-proc_kfreepagetable(pagetable_t pagetable)
+proc_kfreepagetable(pagetable_t pagetable, uint64 sz)
 {
   // unmapping
   uvmunmap(pagetable, UART0, 1, 0);
@@ -267,9 +270,11 @@ proc_kfreepagetable(pagetable_t pagetable)
   uvmunmap(pagetable, KERNBASE, ((uint64)etext - KERNBASE) / PGSIZE, 0);
   uvmunmap(pagetable, (uint64)etext, (PHYSTOP - (uint64)etext) / PGSIZE, 0);
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  // kstack 
-  uvmunmap(pagetable, TRAMPOLINE -  2*PGSIZE, 1, 1);
-  // page table本身内存 
+  // 解除kernel page table 中对user page table entries的映射
+  uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 0);
+  // kstack
+  uvmunmap(pagetable, TRAMPOLINE - 2 * PGSIZE, 1, 1);
+  // page table本身内存
   uvmfree(pagetable, 0);
 }
 
@@ -288,7 +293,7 @@ userinit(void)
 
   // allocate one user page and copy init's instructions
   // and data into it.
-  uvminit(p->pagetable, initcode, sizeof(initcode));
+  ukvminit(p, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
   // prepare for the very first "return" from kernel to user.
@@ -313,11 +318,15 @@ growproc(int n)
 
   sz = p->sz;
   if (n > 0) {
-    if ((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
+    // TODO: 或许拆分ukvmalloc函数为两个会更好一点
+    if ((sz = ukvmalloc(p->pagetable, p->kpagetable, sz, sz + n)) == 0) {
       return -1;
     }
   } else if (n < 0) {
-    sz = uvmdealloc(p->pagetable, sz, sz + n);
+    sz = uvmdealloc(p->pagetable, p->sz, p->sz + n);
+    if(kvmdealloc(p->kpagetable, p->sz, p->sz + n) != sz) {
+      panic("growproc: kvmdealloc failed");
+    }
   }
   p->sz = sz;
   return 0;
@@ -344,6 +353,12 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+  // Copy user page table to kernel page table
+  if (copy_u2k_ptbl(np->pagetable, np->kpagetable, np->sz) < 0) {
+    freeproc(np);
+    release(&np->lock);
+    return -1;
+  }
 
   np->parent = p;
 

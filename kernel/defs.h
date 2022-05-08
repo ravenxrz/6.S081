@@ -93,7 +93,7 @@ int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
 pagetable_t     proc_kpagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
-void 			proc_kfreepagetable(pagetable_t);
+void 			proc_kfreepagetable(pagetable_t, uint64);
 int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
@@ -169,15 +169,18 @@ uint64          kvmpa(uint64);
 void            kvmmap(uint64, uint64, uint64, int);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
-void            uvminit(pagetable_t, uchar *, uint);
+void            ukvminit(struct proc*, uchar *, uint);
 uint64          uvmalloc(pagetable_t, uint64, uint64);
+uint64 			ukvmalloc(pagetable_t uptbl, pagetable_t kptbl, uint64 oldsz, uint64 newsz);
 uint64          uvmdealloc(pagetable_t, uint64, uint64);
+uint64 			kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz);
 #ifdef SOL_COW
 #else
 int             uvmcopy(pagetable_t, pagetable_t, uint64);
 #endif
 void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
+int 			copy_u2k_ptbl(pagetable_t user, pagetable_t ken, uint64 sz);
 void            uvmclear(pagetable_t, uint64);
 uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
