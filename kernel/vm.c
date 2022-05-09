@@ -96,9 +96,7 @@ kpgtbl_init(void)
 
 /*
  *
- * change to:
- * kernel page table init for each process
- * TODO: 添加一个kernel page table的参数，然后做初始化
+ * kernel page table init
  * return 0, means success, non-zero means failure
  */
 void
@@ -117,6 +115,11 @@ kvminit(pagetable_t pagetable)
   if (mappages(pagetable, PLIC, 0x400000, PLIC, PTE_R | PTE_W) < 0) {
     panic("PLC mapping failed");
   }
+
+  // // CLINT
+  // if (mappages(kernel_pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W) < 0) {
+  //   panic("CLINT mapping failed");
+  // }
 
   // map kernel text executable and read-only.
   if (mappages(pagetable, KERNBASE, (uint64)etext - KERNBASE, KERNBASE, PTE_R | PTE_X) < 0) {
@@ -324,7 +327,6 @@ ukvminit(struct proc* proc, uchar* src, uint sz)
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
-// NOTE: we should not use this anymore, use `ukvmalloc` instead.
 uint64
 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 {
@@ -491,9 +493,9 @@ err:
 
 // copy `user` page table mapping to `ken`
 // this copying does not allocate any physical mem
-// while do mapping, the PTE_U will be unset
+// while do kern page table mapping, the PTE_U will be unset
 // 0 means success, -1 failed
-// NOTE: used by fork
+// NOTE: used by fork and exec
 int
 copy_u2k_ptbl(pagetable_t user, pagetable_t ken, uint64 sz)
 {
@@ -514,11 +516,6 @@ copy_u2k_ptbl(pagetable_t user, pagetable_t ken, uint64 sz)
     if (mappages(ken, i, PGSIZE, pa, flags) != 0) {
       panic("copy_u2k_ptbl: mappages failed");
     }
-    // TODO: for debugging, remove code below code
-    // pte_t *tmp_pte = walk(ken, i, 0);
-    // if(*tmp_pte != *pte) {
-    //   panic("kernel page table mapping doesn't work");
-    // }
   }
 
   return 0;

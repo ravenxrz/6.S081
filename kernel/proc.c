@@ -52,7 +52,7 @@ procinit(void)
     // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
     // p->kstack = va;
   }
-  // reload kernel page table info satp so tha the hardware knows about the new
+  
   // PTEs(TODO: 弄清楚是不是每次修改过kernel map后都要重新设置satp？)
   // kvminithart();
 }
@@ -137,8 +137,6 @@ found:
     return 0;
   }
   // Create kernel page table.
-  // TODO: 创建kernel page table per process
-  // 添加 kernel stack mapping 到这个kernel page table
   p->kpagetable = proc_kpagetable(p);
   if (p->kpagetable == 0) {
     freeproc(p);
@@ -168,7 +166,6 @@ freeproc(struct proc* p)
     proc_freepagetable(p->pagetable, p->sz);
   if (p->kpagetable) {
     proc_kfreepagetable(p->kpagetable, p->sz);
-    // TODO: free kpage table
   }
   p->pagetable  = 0;
   p->kpagetable = 0;
@@ -234,7 +231,6 @@ proc_kpagetable(struct proc* p)
     uvmfree(pagetable, 0);
     return 0;
   }
-  // uint64 va = KSTACK((int)(p - proc));
   uint64 va = TRAMPOLINE - 2 * PGSIZE;
   if (mappages(pagetable, va, PGSIZE, (uint64)pa, PTE_R | PTE_W) < 0) {
     panic("mapping kstack in page table failed");
@@ -318,6 +314,10 @@ growproc(int n)
 
   sz = p->sz;
   if (n > 0) {
+    if (sz + n >= PLIC) {
+      printf("sz + n >= PLIC\n");
+      return -1;
+    }
     // TODO: 或许拆分ukvmalloc函数为两个会更好一点
     if ((sz = ukvmalloc(p->pagetable, p->kpagetable, sz, sz + n)) == 0) {
       return -1;
@@ -557,13 +557,13 @@ scheduler(void)
       if (p->state == RUNNABLE) {
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
-        // before jumping back to us.
+        
         p->state = RUNNING;
         c->proc  = p;
-        // TODO： 加载 process 的 kernel page table
-        // NOTE: 旧版本(xv6)原版本，应该如何加载user space 的 page table呢？ -->  ANS: usertrpret
         load_kpgtbl(p->kpagetable);
         swtch(&c->context, &p->context);
+
+        // 切换回内核页表?
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.

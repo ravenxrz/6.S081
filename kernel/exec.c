@@ -19,7 +19,7 @@ exec(char* path, char** argv)
   struct elfhdr elf;
   struct inode* ip;
   struct proghdr ph;
-  pagetable_t pagetable      = 0;
+  pagetable_t pagetable = 0;
   // pagetable_t kern_pagetable = 0;
   pagetable_t oldpagetable;
   // pagetable_t old_ken_pagetable;
@@ -52,6 +52,10 @@ exec(char* path, char** argv)
       goto bad;
     if (ph.vaddr + ph.memsz < ph.vaddr)
       goto bad;
+    if (ph.vaddr + ph.memsz >= PLIC) {
+      printf("ph.vaddr + ph.memsz >= PLIC\n");
+      goto bad;
+    }
     uint64 sz1;
     if ((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz)) == 0) // 为每个段分配内存
       goto bad;
@@ -115,7 +119,7 @@ exec(char* path, char** argv)
   safestrcpy(p->name, last, sizeof(p->name));
 
   // NOTE：不能再次使用重分配内核page table，因为之后的释放会出现问题
-  // alloc kern page table and 
+  // alloc kern page table and
   // if ((kern_pagetable = proc_kpagetable(p)) == 0) // 分配page table
   //   goto bad;
 
@@ -125,13 +129,13 @@ exec(char* path, char** argv)
   copy_u2k_ptbl(pagetable, p->kpagetable, sz);
 
   // Commit to the user image.
-  oldpagetable      = p->pagetable;
+  oldpagetable = p->pagetable;
   // old_ken_pagetable = p->kpagetable;
   p->pagetable      = pagetable;
   p->sz             = sz;
-  p->trapframe->epc = elf.entry;                 // initial program counter = main
-  p->trapframe->sp  = sp;                        // initial stack pointer
-  proc_freepagetable(oldpagetable, oldsz);       // 释放旧page table
+  p->trapframe->epc = elf.entry;           // initial program counter = main
+  p->trapframe->sp  = sp;                  // initial stack pointer
+  proc_freepagetable(oldpagetable, oldsz); // 释放旧page table
   // proc_kfreepagetable(old_ken_pagetable, oldsz); // NOTE: 不能释放旧 kpage table, 因为此时系统(satp寄存器)采用的kernel page table就是该page table，释放过程中页表消失，指令就无法正常执行
 
   // lab: pgtbl, print the first process's page table
