@@ -127,6 +127,12 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // Init other fields
+  p->alarm_ticks_interval = 0;    // no alarm
+  p->alarm_handler = 0;
+  p->last_tick = 0;
+  memset(&p->interrupt_trapframe_save, 0, sizeof(struct trapframe));
+  p->interrupt_trapframe_save.epc = -1;           // set interrpet pc at the top of vm
   return p;
 }
 
