@@ -98,7 +98,7 @@ sys_uptime(void)
 }
 
 uint64
-sys_alaram(void)
+sys_alarm(void)
 {
   int alarm_ticks;
   uint64 alarm_handler = 0;
@@ -117,10 +117,7 @@ uint64
 sys_return(void)
 {
   struct proc *p = myproc();
-  // w_sepc(p->interrpet_pc);
   *p->trapframe = p->interrupt_trapframe_save;
   p->interrupt_trapframe_save.epc = -1;
-  // p->trapframe->epc = p->interrpet_pc;
-  // p->interrpet_pc = -1;
   return 0;
 }

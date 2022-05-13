@@ -83,11 +83,9 @@ usertrap(void)
     // alarm check
     if (p->alarm_ticks_interval != 0 && ticks - p->last_tick >= p->alarm_ticks_interval &&  p->interrupt_trapframe_save.epc == -1) {
       p->last_tick = ticks;
-      // set sepc to the alarm handler
       p->interrupt_trapframe_save =  *p->trapframe;
-      p->interrupt_trapframe_save.epc = r_sepc();
       p->trapframe->epc = p->alarm_handler;
-    }
+    
     yield();
   }
 
@@ -108,7 +106,7 @@ usertrapret(void)
   intr_off();
 
   // send syscalls, interrupts, and exceptions to trampoline.S
-  w_stvec(TRAMPOLINE + (uservec - trampoline));
+  w_stvec(TRAMPOLINE + (uservec - trampoline));  //  指向uservec
 
   // set up trapframe values that uservec will need when
   // the process next re-enters the kernel.
