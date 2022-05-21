@@ -16,6 +16,10 @@ void kernelvec();
 
 extern int devintr();
 
+void* memcpy(void *dst, const void *src, uint n);
+
+pte_t * walk(pagetable_t pagetable, uint64 va, int alloc);
+
 void
 trapinit(void)
 {
@@ -68,11 +72,41 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    // printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+    // printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+    if (r_scause() == 13 || r_scause() == 15) {
+      uint64 va = r_stval();
+      va        = PGROUNDDOWN(va);
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if (pte == 0) {
+        p->killed = 1;
+        goto killed;
+      }
+      if(!(*pte & PTE_COW)) {
+        p->killed = 1;
+        goto killed;
+      }
+      // allocate a new page for cow
+      char* mem = kalloc();
+      if (mem == 0) {
+        // panic("out of memory");
+        p->killed = 1;
+        goto killed;
+      }
+      uint64 pa = PTE2PA(*pte) ;
+      uint flag = (PTE_FLAGS(*pte) & (~PTE_COW)) | PTE_W ;
+      memcpy(mem, (char*)pa, PGSIZE);
+      // remove old map entry.
+      uvmunmap(p->pagetable, va, 1, 1);
+      mappages(p->pagetable, va, PGSIZE, (uint64)mem, flag);
+    } else {
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
   }
 
+killed:
   if(p->killed)
     exit(-1);
 

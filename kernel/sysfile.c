@@ -444,13 +444,15 @@ sys_exec(void)
   int ret = exec(path, argv);
 
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-    kfree(argv[i]);
+    pg_unref(argv[i]);
+    // kfree(argv[i]);
 
   return ret;
 
  bad:
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
-    kfree(argv[i]);
+    pg_unref(argv[i]);
+    // kfree(argv[i]);
   return -1;
 }
 
