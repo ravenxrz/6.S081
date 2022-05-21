@@ -57,7 +57,7 @@ void
 pg_ref(void* pa)
 {
   if((char *)pa < avail_mem_start) {
-    panic("pg_ref: pa is not in avail mem");
+    panic("pg_ref: pa is less than avil_mem_start");
   }
   acquire(&kmem.lock);
   int idx = ((uint64)pa - (uint64)avail_mem_start) / PGSIZE;
@@ -70,7 +70,7 @@ void
 pg_unref(void* pa)
 {
   if((char *)pa < avail_mem_start) {
-    panic("pg_ref: pa is not in avail mem");
+    panic("pg_ref: pa is less than avil_mem_start");
   }
   acquire(&kmem.lock);
   int idx = ((uint64)pa - (uint64)avail_mem_start) / PGSIZE;
@@ -106,7 +106,6 @@ kfree(void *pa)
     panic("kfree");
 
   acquire(&kmem.lock);
-  // set ref cnt to 0
   int idx = ((uint64)pa - (uint64)avail_mem_start) / PGSIZE;
   if(pg_ref_arr[idx] != 0) {
     release(&kmem.lock);
