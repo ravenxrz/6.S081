@@ -220,9 +220,6 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
     if ((pte = walk(pagetable, a, 0)) == 0) {
-      // vmprint(pagetable);
-      // printf("vm address:%p\n", (char *)a);
-      // panic("uvmunmap: walk");
       continue;
     }
     if ((*pte & PTE_V) == 0)

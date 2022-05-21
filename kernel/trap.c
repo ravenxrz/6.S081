@@ -100,9 +100,6 @@ usertrap(void)
   } else {
     uint64 cause = r_scause();
     if (cause == 13 || cause == 15) {
-      // printf("page fault: cause=%d\n", cause);
-      // printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-      // printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
       page_fault_handler(p);
     } else {
       printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
