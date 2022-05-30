@@ -5,8 +5,8 @@ struct buf {
   uint blockno;
   struct sleeplock lock;
   uint refcnt;
-  struct buf *prev; // LRU cache list
   struct buf *next;
   uchar data[BSIZE];
+  uint tick;    // use this to implement lru replacement policy, -1 means nobody used this buf before
 };
 
