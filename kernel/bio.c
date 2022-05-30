@@ -70,7 +70,6 @@ bucket_remove(struct buf** bkt, struct buf* node)
 {
   struct buf* buf  = *bkt;
   struct buf* pbuf = 0;
-
   while (buf != 0 && buf != node) {
     pbuf = buf;
     buf  = buf->next;
@@ -90,56 +89,13 @@ bucket_remove(struct buf** bkt, struct buf* node)
   }
 }
 
-// NOTE: bucket[obkt_id].lock must be held
+// NOTE: bucket[obkt_id].lock nad bucket[nbkt_id].lock must be held
 static void
 bucket_move(uint obkt_id, uint nbkt_id, struct buf* node)
 {
   bucket_remove(&bcache.hash_buckets.bucket[obkt_id], node);
   bucket_insert(&bcache.hash_buckets.bucket[nbkt_id], node);
-  if(node->refcnt != 1) {
-    panic("refcnt is not 1");
-  }
 }
-
-// if no such buf, return 0
-// NOTE: if found such buf, buf.lock would be held
-// static struct buf*
-// find_lru_bucket() 
-// {
-//   struct buf * b = 0;
-//   struct buf* prevb;
-//   int prev_bkt_id = -1;
-//   int cur_bkt_id = -1;
-//   // find from used buffers
-//   for (int i = 0; i < BUCKET_NUM; i++) {
-//     acquire(&bcache.hash_buckets.lock[i]);
-//     prevb = b;
-//     prev_bkt_id = cur_bkt_id;
-//     struct buf* bkt_b = bcache.hash_buckets.bucket[i];
-//     while (bkt_b != 0) {
-//       if (bkt_b->refcnt == 0) {
-//         if (b == 0 || b->tick > bkt_b->tick) {
-//           b = bkt_b;
-//           cur_bkt_id = i;
-//         }
-//       }
-//       bkt_b = bkt_b->next;
-//     }
-
-//     if(prevb != b) {
-//       if(prevb != 0) {
-//         // release previous lock
-//         release(&bcache.hash_buckets.lock[prev_bkt_id]);
-//       } 
-//     } else {
-//       release(&bcache.hash_buckets.lock[i]);
-//     }
-//   }
-//   if(b->refcnt != 0) {
-//     panic("find_lru_bucket: found a buf with refcnt != 0");
-//   }
-//   return b;
-// }
 
 void
 binit(void)
@@ -192,21 +148,9 @@ bget(uint dev, uint blockno)
 
   // Not cached.
   acquire(&bcache.hash_buckets.buckets_lock);
-  acquire(&bcache.hash_buckets.lock[nbkt_id]);
-  // one more check
-  for (struct buf *tmp_b = bcache.hash_buckets.bucket[nbkt_id]; tmp_b != 0; tmp_b = tmp_b->next) {
-    if (tmp_b->dev == dev && tmp_b->blockno == blockno) {
-      tmp_b->refcnt++;
-      printf("bget: found a buf with refcnt = %d\n", tmp_b->refcnt);
-      release(&bcache.hash_buckets.lock[nbkt_id]);
-      release(&bcache.hash_buckets.buckets_lock);
-      acquiresleep(&tmp_b->lock);
-      return tmp_b;
-    }
-  }
-
   int free_buffer_bkt_id = 0;
-find_free_buf:
+retry:
+  // NOTE: 可以使用交替的两个lock来避免retry
   // find a free buffer
   for(int i = 0; i<= BUCKET_NUM; i++) {
     if(i == nbkt_id) continue;
@@ -223,50 +167,43 @@ find_free_buf:
     }
     release(&bcache.hash_buckets.lock[i]); 
   }
-  if(b == 0) {
-    // find in current bucket
-    for (struct buf *tmp_b = bcache.hash_buckets.bucket[nbkt_id]; tmp_b != 0; tmp_b = tmp_b->next) {
-      if (tmp_b->refcnt == 0) {
-        if(b == 0 || tmp_b->tick < b->tick) {
-          b = tmp_b;
-        }
-      }
-    }
-    if(b == 0) {
-      panic("no free buffer");
-    } else {
-      b->dev     = dev;
-      b->blockno = blockno;
-      b->valid   = 0;
-      b->refcnt  = 1;
-      release(&bcache.hash_buckets.lock[nbkt_id]);
-      release(&bcache.hash_buckets.buckets_lock);
-      acquiresleep(&b->lock);
-      return b;
-    }
+  if (b == 0) {
+    panic("no free buffer");
   } 
-  
   acquire(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
   // one more check
   if(b->refcnt != 0) {
     release(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
-    goto find_free_buf;
+    goto retry;
   }
 
-  // if(free_buffer_bkt_id != nbkt_id) {
-    // acquire(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
-  // }
+  // lock current bucket
+  if (free_buffer_bkt_id != nbkt_id) {
+    acquire(&bcache.hash_buckets.lock[nbkt_id]);
+  }
+  // one more check
+  for (struct buf *tmp_b = bcache.hash_buckets.bucket[nbkt_id]; tmp_b != 0; tmp_b = tmp_b->next) {
+    if (tmp_b->dev == dev && tmp_b->blockno == blockno) {
+      b = tmp_b;
+      b->refcnt++;
+      goto end;
+    }
+  }
 
   b->dev     = dev;
   b->blockno = blockno;
   b->valid   = 0;
   b->refcnt = 1;
-  bucket_move(free_buffer_bkt_id, nbkt_id, b);
+  if(free_buffer_bkt_id != nbkt_id) {
+     bucket_move(free_buffer_bkt_id, nbkt_id, b);
+  }
 
+end:
   release(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
-  release(&bcache.hash_buckets.lock[nbkt_id]);
+  if (free_buffer_bkt_id != nbkt_id) {
+    release(&bcache.hash_buckets.lock[nbkt_id]);
+  }
   release(&bcache.hash_buckets.buckets_lock);
-
   acquiresleep(&b->lock);
   return b;
 }
