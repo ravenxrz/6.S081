@@ -1,4 +1,4 @@
-// Buffer cache.
+
 //
 // The buffer cache is a linked list of buf structures holding
 // cached copies of disk block contents.  Caching disk blocks
@@ -41,7 +41,7 @@ print_buckets()
   for (int i = 0; i <= BUCKET_NUM; i++) {
     struct buf* b = bcache.hash_buckets.bucket[i];
     while (b != 0) {
-      // printf("bucket %d, buffer slot %d ref %d blockno %% BUCKET_NUM %d\n", i, b - bcache.buf, b->refcnt, b->blockno % BUCKET_NUM);
+      printf("bucket %d, buffer slot %d ref %d blockno %% BUCKET_NUM %d, blockno %d\n", i, b - bcache.buf, b->refcnt, b->blockno % BUCKET_NUM, b->blockno);
       b = b->next;
     }
   }
@@ -51,6 +51,15 @@ print_buckets()
 static void
 bucket_insert(struct buf** bkt, struct buf* node)
 {
+  // debug
+  struct buf *b = *bkt;
+  while(b) {
+    if (b->blockno != -1 && b->blockno == node->blockno) {
+      panic("bucket_insert: duplicate blockno");
+    }
+    b = b->next;
+  }
+
   node->next = *bkt;
   *bkt       = node;
 }
@@ -68,7 +77,7 @@ bucket_remove(struct buf** bkt, struct buf* node)
   }
 
   if (buf == 0) {
-    // printf("buffer slot:%d does not exit in bucket %d\n", node - bcache.buf, bkt - bcache.hash_buckets.bucket);
+    panic("bucket_remove: buffer slot does not exit in bucket");
   } else {
     if (pbuf == 0) {
       *bkt = buf->next;
@@ -81,53 +90,56 @@ bucket_remove(struct buf** bkt, struct buf* node)
   }
 }
 
+// NOTE: bucket[obkt_id].lock must be held
 static void
 bucket_move(uint obkt_id, uint nbkt_id, struct buf* node)
 {
-  acquire(&bcache.hash_buckets.buckets_lock);
-  if (obkt_id != nbkt_id) {
-    acquire(&bcache.hash_buckets.lock[obkt_id]);
-  }
-  acquire(&bcache.hash_buckets.lock[nbkt_id]);
-  release(&bcache.hash_buckets.buckets_lock);
-
   bucket_remove(&bcache.hash_buckets.bucket[obkt_id], node);
   bucket_insert(&bcache.hash_buckets.bucket[nbkt_id], node);
-  release(&bcache.hash_buckets.lock[nbkt_id]);
-  if (obkt_id != nbkt_id) {
-    release(&bcache.hash_buckets.lock[obkt_id]);
+  if(node->refcnt != 1) {
+    panic("refcnt is not 1");
   }
-  // print_buckets();
-  // printf("\n");
-  // release(&bcache.hash_buckets.buckets_lock);
 }
 
-// find least-recent-use buf node with tick 
 // if no such buf, return 0
-static struct buf*
-find_lru_bucket() 
-{
-  struct buf * b = 0;
-  // find from used buffers
-  // Recycle the least recently used (LRU) unused buffer.
-  for (int i = 0; i < BUCKET_NUM; i++) {
-    acquire(&bcache.hash_buckets.lock[i]);
-    struct buf* bkt_b = bcache.hash_buckets.bucket[i];
-    while (bkt_b != 0) {
-      if (bkt_b->refcnt == 0) {
-        if (b == 0 || b->tick > bkt_b->tick) {
-          if (b != 0)
-            b->refcnt--;
-          b = bkt_b;
-          b->refcnt++;
-        }
-      }
-      bkt_b = bkt_b->next;
-    }
-    release(&bcache.hash_buckets.lock[i]);
-  }
-  return b;
-}
+// NOTE: if found such buf, buf.lock would be held
+// static struct buf*
+// find_lru_bucket() 
+// {
+//   struct buf * b = 0;
+//   struct buf* prevb;
+//   int prev_bkt_id = -1;
+//   int cur_bkt_id = -1;
+//   // find from used buffers
+//   for (int i = 0; i < BUCKET_NUM; i++) {
+//     acquire(&bcache.hash_buckets.lock[i]);
+//     prevb = b;
+//     prev_bkt_id = cur_bkt_id;
+//     struct buf* bkt_b = bcache.hash_buckets.bucket[i];
+//     while (bkt_b != 0) {
+//       if (bkt_b->refcnt == 0) {
+//         if (b == 0 || b->tick > bkt_b->tick) {
+//           b = bkt_b;
+//           cur_bkt_id = i;
+//         }
+//       }
+//       bkt_b = bkt_b->next;
+//     }
+
+//     if(prevb != b) {
+//       if(prevb != 0) {
+//         // release previous lock
+//         release(&bcache.hash_buckets.lock[prev_bkt_id]);
+//       } 
+//     } else {
+//       release(&bcache.hash_buckets.lock[i]);
+//     }
+//   }
+//   if(b->refcnt != 0) {
+//     panic("find_lru_bucket: found a buf with refcnt != 0");
+//   }
+//   return b;
+// }
 
 void
 binit(void)
@@ -148,6 +160,7 @@ binit(void)
   // NOTE: actually we don't need this lock
   acquire(&bcache.hash_buckets.lock[BUCKET_NUM]);
   for (b = bcache.buf; b < bcache.buf + NBUF; b++) {
+    b->blockno = -1;
     bucket_insert(&bcache.hash_buckets.bucket[BUCKET_NUM], b);
   }
   release(&bcache.hash_buckets.lock[BUCKET_NUM]);
@@ -161,47 +174,98 @@ bget(uint dev, uint blockno)
 {
   struct buf* b;
 
-  int bkt_id = blockno % BUCKET_NUM;
-
-  acquire(&bcache.hash_buckets.lock[bkt_id]);
-  for (b = bcache.hash_buckets.bucket[bkt_id]; b != 0; b = b->next) {
+  int nbkt_id = blockno % BUCKET_NUM;
+  acquire(&bcache.hash_buckets.lock[nbkt_id]);
+  for (b = bcache.hash_buckets.bucket[nbkt_id]; b != 0; b = b->next) {
     if (b->dev == dev && b->blockno == blockno) {
       b->refcnt++;
-      release(&bcache.hash_buckets.lock[bkt_id]);
+      release(&bcache.hash_buckets.lock[nbkt_id]);
       acquiresleep(&b->lock);
-      // printf("get/old buffer slot %d ref:%d lock bucket:%d \n", b - bcache.buf, b->refcnt, blockno % BUCKET_NUM);
+
+      if(b->blockno != blockno){
+        panic("blockno invariant volatile");
+      }
       return b;
     }
   }
-  release(&bcache.hash_buckets.lock[bkt_id]);
+  release(&bcache.hash_buckets.lock[nbkt_id]);
 
   // Not cached.
-  // NOTE: maybe using atomic refcnt and tick is much better
-  b = 0;
-
-  // find from unused buffer
-  acquire(&bcache.hash_buckets.lock[BUCKET_NUM]);
-  b = bcache.hash_buckets.bucket[BUCKET_NUM];
-  if (b != 0) {
-    b->refcnt++;
+  acquire(&bcache.hash_buckets.buckets_lock);
+  acquire(&bcache.hash_buckets.lock[nbkt_id]);
+  // one more check
+  for (struct buf *tmp_b = bcache.hash_buckets.bucket[nbkt_id]; tmp_b != 0; tmp_b = tmp_b->next) {
+    if (tmp_b->dev == dev && tmp_b->blockno == blockno) {
+      tmp_b->refcnt++;
+      printf("bget: found a buf with refcnt = %d\n", tmp_b->refcnt);
+      release(&bcache.hash_buckets.lock[nbkt_id]);
+      release(&bcache.hash_buckets.buckets_lock);
+      acquiresleep(&tmp_b->lock);
+      return tmp_b;
+    }
   }
-  release(&bcache.hash_buckets.lock[BUCKET_NUM]);
-  uint64 old_bkt_id = BUCKET_NUM;
 
-  if (b == 0) {
-    // find from used buffer by tick-lru
-    b = find_lru_bucket();
-    if (b == 0)
-      panic("bget: no free buf");
-    old_bkt_id = b->blockno % BUCKET_NUM;
+  int free_buffer_bkt_id = 0;
+find_free_buf:
+  // find a free buffer
+  for(int i = 0; i<= BUCKET_NUM; i++) {
+    if(i == nbkt_id) continue;
+    acquire(&bcache.hash_buckets.lock[i]);
+    struct buf*tmp_b = bcache.hash_buckets.bucket[i];
+    while(tmp_b) {
+      if(tmp_b->refcnt == 0) {
+        if(b == 0 || tmp_b->tick < b->tick) {
+          b = tmp_b;
+          free_buffer_bkt_id = i;
+        }
+      }
+      tmp_b = tmp_b->next;
+    }
+    release(&bcache.hash_buckets.lock[i]); 
   }
+  if(b == 0) {
+    // find in current bucket
+    for (struct buf *tmp_b = bcache.hash_buckets.bucket[nbkt_id]; tmp_b != 0; tmp_b = tmp_b->next) {
+      if (tmp_b->refcnt == 0) {
+        if(b == 0 || tmp_b->tick < b->tick) {
+          b = tmp_b;
+        }
+      }
+    }
+    if(b == 0) {
+      panic("no free buffer");
+    } else {
+      b->dev     = dev;
+      b->blockno = blockno;
+      b->valid   = 0;
+      b->refcnt  = 1;
+      release(&bcache.hash_buckets.lock[nbkt_id]);
+      release(&bcache.hash_buckets.buckets_lock);
+      acquiresleep(&b->lock);
+      return b;
+    }
+  } 
+  
+  acquire(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
+  // one more check
+  if(b->refcnt != 0) {
+    release(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
+    goto find_free_buf;
+  }
+
+  // if(free_buffer_bkt_id != nbkt_id) {
+    // acquire(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
+  // }
 
   b->dev     = dev;
   b->blockno = blockno;
   b->valid   = 0;
-  b->blockno = blockno;
-  bucket_move(old_bkt_id, blockno % BUCKET_NUM, b);
-  // printf("get/new buffer slot %d ref:%d lock bucket:%d \n", b - bcache.buf, b->refcnt, blockno % BUCKET_NUM);
+  b->refcnt = 1;
+  bucket_move(free_buffer_bkt_id, nbkt_id, b);
+
+  release(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
+  release(&bcache.hash_buckets.lock[nbkt_id]);
+  release(&bcache.hash_buckets.buckets_lock);
 
   acquiresleep(&b->lock);
   return b;
@@ -247,7 +311,6 @@ brelse(struct buf* b)
     print_buckets();
     panic("ref negative");
   }
-  // printf("release buffer slot %d cur ref:%d\n", b - bcache.buf, b->refcnt);
   if (b->refcnt == 0) {
     // update tick
     acquire(&tickslock);
@@ -260,7 +323,6 @@ brelse(struct buf* b)
 void
 bpin(struct buf* b)
 {
-  // acquire(&bcache.lock);
   int bkt_id = b->blockno % BUCKET_NUM;
   acquire(&bcache.hash_buckets.lock[bkt_id]);
   b->refcnt++;
