@@ -51,15 +51,6 @@ print_buckets()
 static void
 bucket_insert(struct buf** bkt, struct buf* node)
 {
-  // debug
-  struct buf *b = *bkt;
-  while(b) {
-    if (b->blockno != -1 && b->blockno == node->blockno) {
-      panic("bucket_insert: duplicate blockno");
-    }
-    b = b->next;
-  }
-
   node->next = *bkt;
   *bkt       = node;
 }
@@ -97,6 +88,31 @@ bucket_move(uint obkt_id, uint nbkt_id, struct buf* node)
   bucket_insert(&bcache.hash_buckets.bucket[nbkt_id], node);
 }
 
+// find free buf using tick-lru
+// @return buf, 0 if no free buf, or the free buf pointer
+// if find such buf, *free_bkt_id saved the bucket id of the free buf
+static struct buf*
+find_free_buf(int *free_bkt_id) {
+  struct buf *b = 0;
+  // NOTE: 可以使用交替的两个lock来避免retry
+  // find a free buffer
+  for(int i = 0; i<= BUCKET_NUM; i++) {
+    acquire(&bcache.hash_buckets.lock[i]);
+    struct buf*tmp_b = bcache.hash_buckets.bucket[i];
+    while(tmp_b) {
+      if(tmp_b->refcnt == 0) {
+        if(b == 0 || tmp_b->tick < b->tick) {
+          b = tmp_b;
+          *free_bkt_id = i;
+        }
+      }
+      tmp_b = tmp_b->next;
+    }
+    release(&bcache.hash_buckets.lock[i]); 
+  }
+  return b;
+}
+
 void
 binit(void)
 {
@@ -112,7 +128,7 @@ binit(void)
   for (b = bcache.buf; b < bcache.buf + NBUF; b++) {
     initsleeplock(&b->lock, "buffer");
   }
-  // insert all buffers to hash bucket 0
+  // insert all buffers to hash bucket[BUCKET_NUM]
   // NOTE: actually we don't need this lock
   acquire(&bcache.hash_buckets.lock[BUCKET_NUM]);
   for (b = bcache.buf; b < bcache.buf + NBUF; b++) {
@@ -148,37 +164,21 @@ bget(uint dev, uint blockno)
 
   // Not cached.
   acquire(&bcache.hash_buckets.buckets_lock);
-  int free_buffer_bkt_id = 0;
+  int free_bkt_id = 0;
 retry:
-  // NOTE: 可以使用交替的两个lock来避免retry
-  // find a free buffer
-  for(int i = 0; i<= BUCKET_NUM; i++) {
-    if(i == nbkt_id) continue;
-    acquire(&bcache.hash_buckets.lock[i]);
-    struct buf*tmp_b = bcache.hash_buckets.bucket[i];
-    while(tmp_b) {
-      if(tmp_b->refcnt == 0) {
-        if(b == 0 || tmp_b->tick < b->tick) {
-          b = tmp_b;
-          free_buffer_bkt_id = i;
-        }
-      }
-      tmp_b = tmp_b->next;
-    }
-    release(&bcache.hash_buckets.lock[i]); 
-  }
+  b = find_free_buf(&free_bkt_id);
   if (b == 0) {
     panic("no free buffer");
   } 
-  acquire(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
+  acquire(&bcache.hash_buckets.lock[free_bkt_id]);
   // one more check
   if(b->refcnt != 0) {
-    release(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
+    release(&bcache.hash_buckets.lock[free_bkt_id]);
     goto retry;
   }
 
   // lock current bucket
-  if (free_buffer_bkt_id != nbkt_id) {
+  if (free_bkt_id != nbkt_id) {
     acquire(&bcache.hash_buckets.lock[nbkt_id]);
   }
   // one more check
@@ -194,13 +194,13 @@ retry:
   b->blockno = blockno;
   b->valid   = 0;
   b->refcnt = 1;
-  if(free_buffer_bkt_id != nbkt_id) {
-     bucket_move(free_buffer_bkt_id, nbkt_id, b);
+  if(free_bkt_id != nbkt_id) {
+     bucket_move(free_bkt_id, nbkt_id, b);
   }
 
 end:
-  release(&bcache.hash_buckets.lock[free_buffer_bkt_id]);
-  if (free_buffer_bkt_id != nbkt_id) {
+  release(&bcache.hash_buckets.lock[free_bkt_id]);
+  if (free_bkt_id != nbkt_id) {
     release(&bcache.hash_buckets.lock[nbkt_id]);
   }
   release(&bcache.hash_buckets.buckets_lock);
@@ -263,7 +263,6 @@ bpin(struct buf* b)
   int bkt_id = b->blockno % BUCKET_NUM;
   acquire(&bcache.hash_buckets.lock[bkt_id]);
   b->refcnt++;
-  // printf("pin buffer slot %d ref %d blockno %d\n", b - bcache.buf, b->refcnt, b->blockno);
   release(&bcache.hash_buckets.lock[bkt_id]);
 }
 
@@ -273,6 +272,5 @@ bunpin(struct buf* b)
   int bkt_id = b->blockno % BUCKET_NUM;
   acquire(&bcache.hash_buckets.lock[bkt_id]);
   b->refcnt--;
-  // printf("unpin buffer slot %d ref %d blockno %d\n", b - bcache.buf, b->refcnt, b->blockno);
   release(&bcache.hash_buckets.lock[bkt_id]);
 }
