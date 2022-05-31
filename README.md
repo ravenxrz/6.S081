@@ -12,7 +12,7 @@ MIT 操作系统课程 6.S081 fall 2020 配套lab题解
 - [x] [cow](https://github.com/ravenxrz/6.S081/tree/cow): copy on write机制, [博文](https://ravenblog.vercel.app/archives/9f5039ff.html)
 
 - [x] [thread](https://github.com/ravenxrz/6.S081/tree/thread): 多线程, [博文](https://ravenblog.vercel.app/archives/be830941.html)
-- [ ] lock
+- [x] [lock](https://github.com/ravenxrz/6.S081/tree/lock) 并发 & lock, [博文](https://ravenblog.vercel.app/archives/506bf534.html)
 - [ ] fs
 - [ ] mmap
 - [ ] network
