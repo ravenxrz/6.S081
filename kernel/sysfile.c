@@ -283,6 +283,32 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+// follow the symlink recursively until finding a non-symlink file
+// or the recursive_times is over 10, in which case return 0
+// return ip referring to the target file with ilock held
+// NOTE: ip->lock must be held
+static struct inode*
+follow_symlink(struct inode *ip, int recursive_times)
+{
+  if (recursive_times >= 10) {
+    iunlockput(ip);
+    return 0;
+  }
+  // check if the target file this symlink points to exists or not
+  char target_path[MAXPATH];
+  if (readi(ip, 0, (uint64)target_path, 0, MAXPATH) == 0)
+    panic("open: readi");
+  iunlockput(ip);
+  if ((ip = namei(target_path)) == 0) {
+    return 0;
+  }
+  ilock(ip);
+  if(ip->type == T_SYMLINK) {
+    return follow_symlink(ip, recursive_times + 1);
+  }
+  return ip;
+}
+
 uint64
 sys_open(void)
 {
@@ -313,6 +339,15 @@ sys_open(void)
       iunlockput(ip);
       end_op();
       return -1;
+    }
+     if(ip->type == T_SYMLINK && omode != O_NOFOLLOW) {
+      struct inode *tmp_ip;
+      if ((tmp_ip = follow_symlink(ip, 0)) == 0) {
+        // iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      ip = tmp_ip; // the ilock of ip is held
     }
   }
 
@@ -482,5 +517,43 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+uint64
+sys_symlink(void)
+{
+ char target[MAXPATH];
+ char path[MAXPATH];
+ // get args
+ if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0) {
+   return -1;
+ }
+
+ // check target exists or not
+  // struct inode *target_ip = namei(target);
+  // if(target_ip == 0) {
+  //   return 0;
+  // }
+
+  // check path exist or not
+  // create path and set its type to T_SYMLINK
+  begin_op(); 
+  struct inode *path_ip = create(path, T_SYMLINK, 0, 0);  // return a path_ip with ilock held
+  if(path_ip == 0) {
+    end_op();
+    return -1;
+  }
+  
+  // write target path into path's inode
+  int n = strlen(target) + 1;
+  int r = writei(path_ip, 0, (uint64)target, 0, n);
+  if(r != n) {
+    // NOTE: maybe rollbacking is better?
+    panic("sys_symlink: writei error");
+  }
+  iunlockput(path_ip);
+  end_op();
+
   return 0;
 }
