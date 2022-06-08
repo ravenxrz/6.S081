@@ -26,6 +26,7 @@ static void
 page_fault_handler(struct proc* p)
 {
   uint64 va = r_stval();
+  struct vma_area** vma_slot;
   struct vma_area* vma;
   struct file *file;
   if (va >= p->sz) {
@@ -35,10 +36,11 @@ page_fault_handler(struct proc* p)
 
   // 检查va落入到哪个 vma area
   va = PGROUNDDOWN(va);
-  if((vma = vmalookup(p, va)) == 0) {
+  if((vma_slot = vmalookup(p, va)) == 0) {
     p->killed = 1;
     return;
   }
+  vma = *vma_slot;
 
   // alloc mem
   char* mem = kalloc();

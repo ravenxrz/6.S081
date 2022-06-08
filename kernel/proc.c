@@ -135,6 +135,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // init vma pointers
+  memset(&p->vmas, 0, sizeof(p->vmas));
   return p;
 }
 
@@ -279,7 +281,8 @@ int lazy_growproc(struct proc *p, int n)
 int
 fork(void)
 {
-  int i, pid;
+  int i, j, pid;
+  struct vma_area* vma;
   struct proc *np;
   struct proc *p = myproc();
 
@@ -309,6 +312,25 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
+
+  // Copy vma
+  j = 0;
+  for(i = 0; i < NOFILE; i++) {
+    if(p->vmas[i] != 0 && p->vmas[i]->file != 0) {
+      vma = vmaalloc();
+      if(vma == 0) {
+        panic("fork: vma table is full");
+      }
+      vma->addr = p->vmas[i]->addr;
+      vma->len = p->vmas[i]->len;
+      vma->prot = p->vmas[i]->prot;
+      vma->flags = p->vmas[i]->flags;
+      vma->off = p->vmas[i]->off;
+      vma->file = p->vmas[i]->file;
+      filedup(vma->file);
+      np->vmas[j++] = vma;
+    }
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -716,15 +738,17 @@ procdump(void)
   }
 }
 
-struct vma_area *
+// find the vma slot refering to a vma structure that contains 
+// va
+struct vma_area **
 vmalookup(struct proc* p, uint64 va)
 {
   acquire(&p->lock);
   for(int i = 0; i< NOFILE; i++) {
-    if(p->vmas[i]->file != 0) {
+    if(p->vmas[i] != 0 && p->vmas[i]->file != 0) {
       if(va >= (uint64)(p->vmas[i]->addr) && va < (uint64)(p->vmas[i]->addr + p->vmas[i]->len)) {
         release(&p->lock);
-        return p->vmas[i];
+        return &p->vmas[i];
       } 
     }
   }

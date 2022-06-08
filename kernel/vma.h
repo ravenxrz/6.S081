@@ -7,6 +7,6 @@ struct vma_area {
 	uint64 len;
 	int prot;
 	int flags;	
-	struct file *file;	
 	uint64 off;
+	struct file *file;	
 };

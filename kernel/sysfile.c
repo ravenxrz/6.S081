@@ -566,6 +566,7 @@ sys_munmap(void)
   uint64 addr;
   int len;
   struct proc* cur_proc;
+  struct vma_area** vma_slot;
   struct vma_area* vma;
   struct file* file;
   if(argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
@@ -580,10 +581,11 @@ sys_munmap(void)
   }
 
   cur_proc = myproc();
-  vma      = vmalookup(cur_proc, addr);
-  if(vma == 0) {
+  vma_slot      = vmalookup(cur_proc, addr);
+  if(vma_slot == 0) {
     return -1;
   }
+  vma = *vma_slot;
   if (len > vma->len) {
     panic("sys_munmap: len is larger than the vma");
   }
@@ -621,6 +623,7 @@ sys_munmap(void)
   if((uint64)vma->addr == addr && vma->len == len) { // the whole vma
     fileclose(file);
     vmafree(vma);
+    *vma_slot = 0;
   } else if((uint64)vma->addr == addr && vma->len > len){ // the start region
     // update vma
     vma->addr = (char *)(addr + len);
