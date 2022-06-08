@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "vma.h"
 
 struct cpu cpus[NCPU];
 
@@ -257,6 +258,19 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  return 0;
+}
+
+// Increase proc used addr space without allocating physical pages
+// Return 0 on success, -1 on failure.
+// NOTE: n must be large than 0.
+// NOTE: p.lock should be held
+int lazy_growproc(struct proc *p, int n) 
+{
+  if(n <= 0) {
+    return -1;
+  }
+  p->sz += n;
   return 0;
 }
 
@@ -700,4 +714,20 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+struct vma_area *
+vmalookup(struct proc* p, uint64 va)
+{
+  acquire(&p->lock);
+  for(int i = 0; i< NOFILE; i++) {
+    if(p->vmas[i]->file != 0) {
+      if(va >= (uint64)(p->vmas[i]->addr) && va < (uint64)(p->vmas[i]->addr + p->vmas[i]->len)) {
+        release(&p->lock);
+        return p->vmas[i];
+      } 
+    }
+  }
+  release(&p->lock);
+  return 0;
 }

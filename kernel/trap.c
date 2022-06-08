@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "vma.h"
+#include "sleeplock.h"
+#include "fs.h"
+#include "file.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -15,6 +19,61 @@ extern char trampoline[], uservec[], userret[];
 void kernelvec();
 
 extern int devintr();
+
+// mmap allocate physical memory lazily. 
+// use this function to allocate physical memory and populate the corresponding file content.
+static void
+page_fault_handler(struct proc* p)
+{
+  uint64 va = r_stval();
+  struct vma_area* vma;
+  struct file *file;
+  if (va >= p->sz) {
+    p->killed = 1;
+    return;
+  }
+
+  // 检查va落入到哪个 vma area
+  va = PGROUNDDOWN(va);
+  if((vma = vmalookup(p, va)) == 0) {
+    p->killed = 1;
+    return;
+  }
+
+  // alloc mem
+  char* mem = kalloc();
+  if (mem == 0) {
+    // panic("page fault handler: out of memory");
+    p->killed = 1;
+    return;
+  }
+  memset(mem, 0, PGSIZE);
+
+  // TODO: 添加 va 大于 file size 的处理逻辑
+  // populate file content
+  uint64 start_off = va - (uint64)vma->addr + vma->off;  
+  file = vma->file;
+  ilock(file->ip);
+  begin_op();
+  uint64 ret_bytes = file->ip->size < start_off + PGSIZE ? 
+                      ret_bytes = file->ip->size - start_off : PGSIZE;
+  if(readi(file->ip, 0, (uint64)mem, start_off, ret_bytes) != ret_bytes) {
+    iunlock(file->ip);
+    end_op();
+    kfree(mem);
+    p->killed = 1;
+    return;
+  }
+  iunlock(file->ip);
+  end_op();
+
+  // add map pages
+  if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W | PTE_R | PTE_U) != 0) {
+    kfree(mem);
+    p->killed = 1;
+  }
+}
+
 
 void
 trapinit(void)
@@ -68,9 +127,14 @@ usertrap(void)
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
-    printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
-    printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
-    p->killed = 1;
+    uint64 cause = r_scause();
+    if(cause == 13 || cause == 15) {
+      page_fault_handler(p);
+    } else {
+      printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
+      printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
+      p->killed = 1;
+    }
   }
 
   if(p->killed)

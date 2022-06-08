@@ -6,7 +6,6 @@
 
 #include "types.h"
 #include "riscv.h"
-#include "defs.h"
 #include "param.h"
 #include "stat.h"
 #include "spinlock.h"
@@ -15,6 +14,8 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "vma.h"
+#include "defs.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -482,5 +483,153 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+// char *mmap(void *addr, int len, int prot, int flags, int fd, int off);
+// the addr and offset always will be 0
+uint64
+sys_mmap(void)
+{
+
+  int len, prot, flags, fd, off;
+  struct proc* cur_proc;
+  struct file* file;
+  struct vma_area *vma;
+
+  if (argint(1, &len) < 0 || argint(2, &prot) < 0 || argint(3, &flags) < 0 || argint(4, &fd) < 0 || argint(5, &off) < 0)
+    return -1;
+  // check whether the file is opened or not
+  cur_proc = myproc();
+  if (fd < 0 || fd >= NOFILE || cur_proc->ofile[fd] == 0) {
+    return -1;
+  }
+  // TODO: maybe we should check off + len is large than file size
+  // check whether the perm of prot is the subset of the perm of the file or not
+  file = cur_proc->ofile[fd];
+  if (prot & PROT_READ) {
+    if (!file->readable) {
+      return -1;
+    }
+  }
+  if ((flags & MAP_SHARED) && (prot & PROT_WRITE)) {  // MAP_SHARED flag with PROT_WRITE indicates file must be writeable
+    if (!file->writable) {
+      return -1;
+    }
+  }
+
+  // allocate a vma 
+  if((vma = vmaalloc()) == 0) {
+    panic("vmaalloc failed");
+    return -1; 
+  }
+  vma->addr = 0;    // init addr: see code below 
+  vma->len = len;
+  vma->prot = prot;
+  vma->flags = flags;
+  vma->off = off;
+  vma->file = file;
+  filedup(vma->file); // increase file refcnt so that it's impossible to free the file
+
+  acquire(&cur_proc->lock);
+  // find the first continuous addr space in user page table so that this mapping can be mapped successfully
+  uint64 sz = cur_proc->sz;
+  // 向上页对齐, 如果不对齐，后续的page fualt handler使用的va可能低于addr
+  uint64 start_addr = PGROUNDUP(sz);
+  if(lazy_growproc(cur_proc, len + start_addr - sz) < 0) {
+    release(&cur_proc->lock);
+    fileclose(vma->file);
+    vmafree(vma);
+    return -1;
+  }
+  vma->addr = (char *)start_addr;
+
+  // put the vam structure into proc structure
+  int i;
+  for(i = 0; i< NOFILE; i++) {
+    if(cur_proc->vmas[i] == 0) {
+      cur_proc->vmas[i] = vma;
+      break;
+    }
+  }
+  release(&cur_proc->lock);
+  if(i == NOFILE) {
+    panic("the vmas in proc is full");
+    return -1;
+  }
+  return start_addr;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int len;
+  struct proc* cur_proc;
+  struct vma_area* vma;
+  struct file* file;
+  if(argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
+    return -1;
+  }
+  if(addr % PGSIZE) {
+    panic("sys_munmap: addr should be PGSIZE-aligned");
+  }
+  // debug
+  if(len % PGSIZE) {
+    panic("sys_munamp: len shoulbe be PGSIZE-aligned");
+  }
+
+  cur_proc = myproc();
+  vma      = vmalookup(cur_proc, addr);
+  if(vma == 0) {
+    return -1;
+  }
+  if (len > vma->len) {
+    panic("sys_munmap: len is larger than the vma");
+  }
+  file = vma->file;
+
+  // flush modified pages back to file
+  // free mapged page
+  if (vma->flags & MAP_SHARED) {
+    ilock(file->ip);
+    begin_op();
+  }
+  for (uint64 a = addr; a < (uint64)addr + len; a += PGSIZE) {
+    pte_t* pte = walk(cur_proc->pagetable, a, 0);
+    if (vma->flags & MAP_SHARED) {
+      if (*pte & PTE_D) { // if current page is dirty, wirte it back
+        uint64 bytes = a + PGSIZE < (uint64)vma->addr + vma->len ? PGSIZE : vma->len % PGSIZE;
+        uint64 file_off = a - (uint64)vma->addr + vma->off;
+        if (writei(file->ip, 1, a, file_off, bytes) != bytes) {
+          end_op();
+          panic("munmap: write dirty page back failed");
+        }
+      }
+    }
+    // even if the last page is not PGSIZE-algined, we still can free it for page_handler can reload the page
+    uvmunmap(cur_proc->pagetable, a, 1, 1);
+  }
+  if (vma->flags & MAP_SHARED) {
+    iunlock(file->ip);
+    end_op();
+  }
+
+  // lab 简化了 munmap操作， 只支持映射区域全释放，头释放和尾释放
+  // TODO(raven): 暂时没有考虑4k对齐的问题
+  // update vma or free it
+  if((uint64)vma->addr == addr && vma->len == len) { // the whole vma
+    fileclose(file);
+    vmafree(vma);
+  } else if((uint64)vma->addr == addr && vma->len > len){ // the start region
+    // update vma
+    vma->addr = (char *)(addr + len);
+    vma->len -= len;
+  } else if((uint64)vma->addr != addr && addr + len == (uint64)vma->addr + vma->len) { // the end region
+    vma->len -=len;
+  } else {
+    panic("unsupported munmap operation: this will leading to a hole in the va");
+  }
+
   return 0;
 }
