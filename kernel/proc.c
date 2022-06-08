@@ -17,6 +17,7 @@ int nextpid = 1;
 struct spinlock pid_lock;
 
 extern void forkret(void);
+extern uint64 do_munmap(uint64 addr, int len);
 static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
@@ -386,6 +387,12 @@ exit(int status)
       struct file *f = p->ofile[fd];
       fileclose(f);
       p->ofile[fd] = 0;
+    }
+  }
+  // Free all valid vams
+  for(int i = 0; i< NOFILE; i++) {
+    if(p->vmas[i] != 0 && p->vmas[i]->file != 0) {
+      do_munmap((uint64)p->vmas[i]->addr, p->vmas[i]->len);
     }
   }
 

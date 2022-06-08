@@ -51,23 +51,26 @@ page_fault_handler(struct proc* p)
   }
   memset(mem, 0, PGSIZE);
 
-  // TODO: 添加 va 大于 file size 的处理逻辑
   // populate file content
   uint64 start_off = va - (uint64)vma->addr + vma->off;  
   file = vma->file;
+
   ilock(file->ip);
-  begin_op();
-  uint64 ret_bytes = file->ip->size < start_off + PGSIZE ? 
-                      ret_bytes = file->ip->size - start_off : PGSIZE;
-  if(readi(file->ip, 0, (uint64)mem, start_off, ret_bytes) != ret_bytes) {
+  if(start_off >= file->ip->size) { // mapping size is larger than file size, fill memory with zero
+    iunlock(file->ip);
+  } else {
+    begin_op();
+    uint64 ret_bytes = file->ip->size < start_off + PGSIZE ? file->ip->size - start_off : PGSIZE;
+    if (readi(file->ip, 0, (uint64)mem, start_off, ret_bytes) != ret_bytes) {
+      iunlock(file->ip);
+      end_op();
+      kfree(mem);
+      p->killed = 1;
+      return;
+    }
     iunlock(file->ip);
     end_op();
-    kfree(mem);
-    p->killed = 1;
-    return;
   }
-  iunlock(file->ip);
-  end_op();
 
   // add map pages
   if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, PTE_W | PTE_R | PTE_U) != 0) {

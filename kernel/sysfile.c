@@ -504,7 +504,6 @@ sys_mmap(void)
   if (fd < 0 || fd >= NOFILE || cur_proc->ofile[fd] == 0) {
     return -1;
   }
-  // TODO: maybe we should check off + len is large than file size
   // check whether the perm of prot is the subset of the perm of the file or not
   file = cur_proc->ofile[fd];
   if (prot & PROT_READ) {
@@ -560,18 +559,14 @@ sys_mmap(void)
   return start_addr;
 }
 
-uint64
-sys_munmap(void)
+uint64 
+do_munmap(uint64 addr, int len)
 {
-  uint64 addr;
-  int len;
   struct proc* cur_proc;
   struct vma_area** vma_slot;
   struct vma_area* vma;
   struct file* file;
-  if(argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
-    return -1;
-  }
+
   if(addr % PGSIZE) {
     panic("sys_munmap: addr should be PGSIZE-aligned");
   }
@@ -633,6 +628,16 @@ sys_munmap(void)
   } else {
     panic("unsupported munmap operation: this will leading to a hole in the va");
   }
-
   return 0;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int len;
+  if(argaddr(0, &addr) < 0 || argint(1, &len) < 0) {
+    return -1;
+  }
+  return do_munmap(addr, len);
 }
