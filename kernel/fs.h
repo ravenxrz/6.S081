@@ -36,7 +36,7 @@ struct dinode {
   short minor;          // Minor device number (T_DEVICE only)
   short nlink;          // Number of links to inode in file system
   uint size;            // Size of file (bytes)
-  uint addrs[NDIRECT + 1 + 1]; // NDIRECT direct block, 1 indirect block, 2 doubly indirect blocks
+  uint addrs[NDIRECT + 1 + 1]; // NDIRECT direct block, 1 indirect block, 1 doubly indirect blocks
 };
 
 // Inodes per block.
