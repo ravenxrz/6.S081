@@ -13,6 +13,6 @@ MIT 操作系统课程 6.S081 fall 2020 配套lab题解
 
 - [x] [thread](https://github.com/ravenxrz/6.S081/tree/thread): 多线程, [博文](https://ravenblog.vercel.app/archives/be830941.html)
 - [x] [lock](https://github.com/ravenxrz/6.S081/tree/lock) 并发 & lock, [博文](https://ravenblog.vercel.app/archives/506bf534.html)
-- [ ] fs
-- [ ] mmap
+- [x] [fs](https://github.com/ravenxrz/6.S081/tree/fs) 文件系统, [博文](https://ravenblog.vercel.app/archives/64032a5e.html)
+- [x] [mmap](https://github.com/ravenxrz/6.S081/tree/mmap) mmap
 - [ ] network
