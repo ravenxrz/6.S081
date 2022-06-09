@@ -266,7 +266,7 @@ growproc(int n)
 
 // Increase proc used addr space without allocating physical pages
 // Return 0 on success, -1 on failure.
-// NOTE: n must be large than 0.
+// NOTE: n must be larger than 0.
 // NOTE: p.lock should be held
 int lazy_growproc(struct proc *p, int n) 
 {
@@ -745,7 +745,7 @@ procdump(void)
   }
 }
 
-// find the vma slot refering to a vma structure that contains 
+// find the vma slot refering to a vma structure which contains 
 // va
 struct vma_area **
 vmalookup(struct proc* p, uint64 va)
@@ -753,7 +753,7 @@ vmalookup(struct proc* p, uint64 va)
   acquire(&p->lock);
   for(int i = 0; i< NOFILE; i++) {
     if(p->vmas[i] != 0 && p->vmas[i]->file != 0) {
-      if(va >= (uint64)(p->vmas[i]->addr) && va < (uint64)(p->vmas[i]->addr + p->vmas[i]->len)) {
+      if(va >= p->vmas[i]->addr && va < p->vmas[i]->addr + p->vmas[i]->len) {
         release(&p->lock);
         return &p->vmas[i];
       } 

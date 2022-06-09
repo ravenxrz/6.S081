@@ -533,7 +533,7 @@ sys_mmap(void)
   acquire(&cur_proc->lock);
   // find the first continuous addr space in user page table so that this mapping can be mapped successfully
   uint64 sz = cur_proc->sz;
-  // 向上页对齐, 如果不对齐，后续的page fualt handler使用的va可能低于addr
+  // 向上页对齐, 如果不对齐，后续的page fault handler使用的va可能低于addr
   uint64 start_addr = PGROUNDUP(sz);
   if(lazy_growproc(cur_proc, len + start_addr - sz) < 0) {
     release(&cur_proc->lock);
@@ -541,7 +541,7 @@ sys_mmap(void)
     vmafree(vma);
     return -1;
   }
-  vma->addr = (char *)start_addr;
+  vma->addr = start_addr;
 
   // put the vam structure into proc structure
   int i;
@@ -592,19 +592,18 @@ do_munmap(uint64 addr, int len)
     ilock(file->ip);
     begin_op();
   }
-  for (uint64 a = addr; a < (uint64)addr + len; a += PGSIZE) {
+  for (uint64 a = addr; a < addr + len; a += PGSIZE) {
     pte_t* pte = walk(cur_proc->pagetable, a, 0);
     if (vma->flags & MAP_SHARED) {
       if (*pte & PTE_D) { // if current page is dirty, wirte it back
-        uint64 bytes = a + PGSIZE < (uint64)vma->addr + vma->len ? PGSIZE : vma->len % PGSIZE;
-        uint64 file_off = a - (uint64)vma->addr + vma->off;
+        uint64 bytes = a + PGSIZE < vma->addr + vma->len ? PGSIZE : vma->len % PGSIZE;
+        uint64 file_off = a - vma->addr + vma->off;
         if (writei(file->ip, 1, a, file_off, bytes) != bytes) {
           end_op();
           panic("munmap: write dirty page back failed");
         }
       }
     }
-    // even if the last page is not PGSIZE-algined, we still can free it for page_handler can reload the page
     uvmunmap(cur_proc->pagetable, a, 1, 1);
   }
   if (vma->flags & MAP_SHARED) {
@@ -615,15 +614,15 @@ do_munmap(uint64 addr, int len)
   // lab 简化了 munmap操作， 只支持映射区域全释放，头释放和尾释放
   // TODO(raven): 暂时没有考虑4k对齐的问题
   // update vma or free it
-  if((uint64)vma->addr == addr && vma->len == len) { // the whole vma
+  if(vma->addr == addr && vma->len == len) { // the whole vma
     fileclose(file);
     vmafree(vma);
     *vma_slot = 0;
-  } else if((uint64)vma->addr == addr && vma->len > len){ // the start region
+  } else if(vma->addr == addr && vma->len > len){ // the start region
     // update vma
-    vma->addr = (char *)(addr + len);
+    vma->addr = (addr + len);
     vma->len -= len;
-  } else if((uint64)vma->addr != addr && addr + len == (uint64)vma->addr + vma->len) { // the end region
+  } else if(vma->addr != addr && addr + len == vma->addr + vma->len) { // the end region
     vma->len -=len;
   } else {
     panic("unsupported munmap operation: this will leading to a hole in the va");

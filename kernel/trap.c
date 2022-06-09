@@ -52,7 +52,7 @@ page_fault_handler(struct proc* p)
   memset(mem, 0, PGSIZE);
 
   // populate file content
-  uint64 start_off = va - (uint64)vma->addr + vma->off;  
+  uint64 start_off = va - vma->addr + vma->off;  
   file = vma->file;
 
   ilock(file->ip);
