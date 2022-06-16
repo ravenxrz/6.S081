@@ -94,6 +94,7 @@
 #define E1000_TXD_CMD_RS     0x08 /* Report Status */
 
 /* Transmit Descriptor status definitions [E1000 3.3.3.2] */
+// Indicates that the descriptor is finished and is written back either after the descriptor has been processed (with RS set) or for the 82544GC/EI, after the packet has been transmitted on the wire (with RPS set).
 #define E1000_TXD_STAT_DD    0x00000001 /* Descriptor Done */
 
 // [E1000 3.3.3]
